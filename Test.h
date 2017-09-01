@@ -129,9 +129,9 @@ NSString* WhyUnequalObjects(id a, id b);
 
 // Nasty internals ...
 #if DEBUG
-void _RunTestCase( void (*testptr)(), const char *name );
+void _RunTestCase( void (*testptr)(void), const char *name );
 
-struct TestCaseLink {void (*testptr)(); const char *name; BOOL passed; struct TestCaseLink *next;};
+struct TestCaseLink {void (*testptr)(void); const char *name; BOOL passed; struct TestCaseLink *next;};
 extern struct TestCaseLink *gAllTestCases;
 #endif // DEBUG
 void _AssertEqual(id val, id expected, const char* valExpr,
