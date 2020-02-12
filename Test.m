@@ -72,72 +72,72 @@ static void RecordFailedTest( struct TestCaseLink *test ) {
 
 static BOOL RunTestCase( struct TestCaseLink *test )
 {
-    if( !test->testptr )
-        return YES;     // already ran this test
-
+    @autoreleasepool {
+        if( !test->testptr )
+            return YES;     // already ran this test
+        
 #ifndef MY_DISABLE_LOGGING
-    BOOL oldLogging = EnableLog(YES);
+        BOOL oldLogging = EnableLog(YES);
 #endif
-    BOOL wasRunningTestCase = gRunningTestCase;
-    gRunningTestCase = YES;
-    struct TestCaseLink* prevTest = sCurrentTest;
-    sCurrentTest = test;
-
-    NSAutoreleasePool *pool = [NSAutoreleasePool new];
-    Log(@"=== Testing %s ...",test->name);
-    @try{
-        sCurTestCaseExceptions = 0;
-        MYSetExceptionReporter(&TestCaseExceptionReporter);
-
-        test->testptr();    //SHAZAM!
-
-        if (!CheckCoverage(test->name)) {
-            Log(@"XXX FAILED test case '%s' due to coverage failures", test->name);
-            sFailed++;
-            RecordFailedTest(test);
-            ReportTestCase(test, @"coverage", nil);
-        } else if( sCurTestCaseExceptions > 0 ) {
-            Log(@"XXX FAILED test case '%s' due to %i exception(s) already reported above",
-                test->name,sCurTestCaseExceptions);
-            sFailed++;
-            RecordFailedTest(test);
-            ReportTestCase(test, @"exception", $sprintf(@"%d exception(s) already caught",
-                                                        sCurTestCaseExceptions));
-        } else {
-            Log(@"√√√ %s passed\n\n",test->name);
-            test->passed = YES;
-            sPassed++;
-            ReportTestCase(test, nil, nil);
+        BOOL wasRunningTestCase = gRunningTestCase;
+        gRunningTestCase = YES;
+        struct TestCaseLink* prevTest = sCurrentTest;
+        sCurrentTest = test;
+        
+        Log(@"=== Testing %s ...",test->name);
+        @try{
+            sCurTestCaseExceptions = 0;
+            MYSetExceptionReporter(&TestCaseExceptionReporter);
+            
+            test->testptr();    //SHAZAM!
+            
+            if (!CheckCoverage(test->name)) {
+                Log(@"XXX FAILED test case '%s' due to coverage failures", test->name);
+                sFailed++;
+                RecordFailedTest(test);
+                ReportTestCase(test, @"coverage", nil);
+            } else if( sCurTestCaseExceptions > 0 ) {
+                Log(@"XXX FAILED test case '%s' due to %i exception(s) already reported above",
+                    test->name,sCurTestCaseExceptions);
+                sFailed++;
+                RecordFailedTest(test);
+                ReportTestCase(test, @"exception", $sprintf(@"%d exception(s) already caught",
+                                                            sCurTestCaseExceptions));
+            } else {
+                Log(@"√√√ %s passed\n\n",test->name);
+                test->passed = YES;
+                sPassed++;
+                ReportTestCase(test, nil, nil);
+            }
+        }@catch( NSException *x ) {
+            if( [x.name isEqualToString: @"TestCaseSkipped"] ) {
+                Log(@"... skipping test %s since %@\n\n", test->name, x.reason);
+                ReportTestCase(test, @"skipped", x.reason);
+            } else {
+                fflush(stderr);
+                Log(@"XXX FAILED test case '%s' due to:\nException: %@\n%@\n\n",
+                    test->name,x,x.my_callStack);
+                sFailed++;
+                RecordFailedTest(test);
+                NSString* failureType = x.name;
+                NSString* reason = x.reason;
+                if ([failureType isEqualToString: NSInternalInconsistencyException])
+                    if ([reason hasPrefix: @"Assertion failed: "]) {
+                        failureType = @"assertion";
+                        reason = [reason substringFromIndex: 18];
+                    }
+                ReportTestCase(test, failureType, reason);
+            }
+        }@finally{
+            test->testptr = NULL;       // prevents test from being run again
         }
-    }@catch( NSException *x ) {
-        if( [x.name isEqualToString: @"TestCaseSkipped"] ) {
-            Log(@"... skipping test %s since %@\n\n", test->name, x.reason);
-            ReportTestCase(test, @"skipped", x.reason);
-        } else {
-            fflush(stderr);
-            Log(@"XXX FAILED test case '%s' due to:\nException: %@\n%@\n\n", 
-                  test->name,x,x.my_callStack);
-            sFailed++;
-            RecordFailedTest(test);
-            NSString* failureType = x.name;
-            NSString* reason = x.reason;
-            if ([failureType isEqualToString: NSInternalInconsistencyException])
-                if ([reason hasPrefix: @"Assertion failed: "]) {
-                    failureType = @"assertion";
-                    reason = [reason substringFromIndex: 18];
-                }
-            ReportTestCase(test, failureType, reason);
-        }
-    }@finally{
-        [pool drain];
-        test->testptr = NULL;       // prevents test from being run again
+        sCurrentTest = prevTest;
+        gRunningTestCase = wasRunningTestCase;
+#ifndef MY_DISABLE_LOGGING
+        EnableLog(oldLogging);
+#endif
+        return test->passed;
     }
-    sCurrentTest = prevTest;
-    gRunningTestCase = wasRunningTestCase;
-#ifndef MY_DISABLE_LOGGING
-    EnableLog(oldLogging);
-#endif
-    return test->passed;
 }
 
 
@@ -190,60 +190,58 @@ static void WriteReport(NSString* filename) {
 
 void RunTestCases( int argc, const char **argv )
 {
-    sPassed = sFailed = 0;
-    sFailedTestNames = nil;
-    BOOL stopAfterTests = NO;
+    @autoreleasepool {
+        sPassed = sFailed = 0;
+        sFailedTestNames = nil;
+        BOOL stopAfterTests = NO;
 #if XML_REPORT
-    sReportXML = [NSXMLElement elementWithName: @"testsuite"];
+        sReportXML = [NSXMLElement elementWithName: @"testsuite"];
 #endif
-    BOOL writeReport = NO;
-    for( int i=1; i<argc; i++ ) {
-        const char *arg = argv[i];
-        if( strncmp(arg,"Test_",5)==0 ) {
-            arg += 5;
-            if( strcmp(arg,"Only")==0 )
-                stopAfterTests = YES;
-            else if( strcmp(arg,"Report")==0 )
-                writeReport = YES;
-            else if( strcmp(arg,"All") == 0 ) {
-                for( struct TestCaseLink *link = gAllTestCases; link; link=link->next )
-                    RunTestCase(link);
-            } else {
-                RunTestCaseNamed(arg);
+        BOOL writeReport = NO;
+        for( int i=1; i<argc; i++ ) {
+            const char *arg = argv[i];
+            if( strncmp(arg,"Test_",5)==0 ) {
+                arg += 5;
+                if( strcmp(arg,"Only")==0 )
+                    stopAfterTests = YES;
+                else if( strcmp(arg,"Report")==0 )
+                    writeReport = YES;
+                else if( strcmp(arg,"All") == 0 ) {
+                    for( struct TestCaseLink *link = gAllTestCases; link; link=link->next )
+                        RunTestCase(link);
+                } else {
+                    RunTestCaseNamed(arg);
+                }
             }
         }
-    }
-    if (sFailed == 0)
-        CheckUncalledCoverage();
-    if( sPassed>0 || sFailed>0 || stopAfterTests ) {
-        NSAutoreleasePool *pool = [NSAutoreleasePool new];
-        if (writeReport) {
+        if (sFailed == 0)
+            CheckUncalledCoverage();
+        if( sPassed>0 || sFailed>0 || stopAfterTests ) {
+            if (writeReport) {
 #if XML_REPORT
-            WriteReport(@"test_report.xml");
+                WriteReport(@"test_report.xml");
 #else
-            Warn(@"Write_Report option is not supported on this platform");
+                Warn(@"Write_Report option is not supported on this platform");
 #endif
+            }
+            if( sFailed==0 )
+                AlwaysLog(@"√√√√√√ ALL %i TESTS PASSED √√√√√√", sPassed);
+            else {
+                Warn(@"****** %i of %i TESTS FAILED: %@ ******",
+                     sFailed, sPassed+sFailed,
+                     [sFailedTestNames componentsJoinedByString: @", "]);
+                exit(1);
+            }
+            if( stopAfterTests ) {
+                Log(@"Stopping after tests ('Test_Only' arg detected)");
+                exit(0);
+            }
         }
-        if( sFailed==0 )
-            AlwaysLog(@"√√√√√√ ALL %i TESTS PASSED √√√√√√", sPassed);
-        else {
-            Warn(@"****** %i of %i TESTS FAILED: %@ ******", 
-                 sFailed, sPassed+sFailed,
-                 [sFailedTestNames componentsJoinedByString: @", "]);
-            exit(1);
-        }
-        if( stopAfterTests ) {
-            Log(@"Stopping after tests ('Test_Only' arg detected)");
-            exit(0);
-        }
-        [pool drain];
-    }
-    [sFailedTestNames release];
-    sFailedTestNames = nil;
+        sFailedTestNames = nil;
 #if XML_REPORT
-    [sReportXML release];
-    sReportXML = nil;
+        sReportXML = nil;
 #endif
+    }
 }
 
 
@@ -337,7 +335,7 @@ void _AssertFailed(const void *selOrFn, const char *sourceFile, int sourceLine,
     if( message ) {
         va_list args;
         va_start(args,message);
-        message = [[[NSString alloc] initWithFormat: message arguments: args] autorelease];
+        message = [[NSString alloc] initWithFormat: message arguments: args];
         NSLog(@"*** ASSERTION FAILED: %@", message);
         message = [@"Assertion failed: " stringByAppendingString: message];
         va_end(args);
